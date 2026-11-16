@@ -2,9 +2,9 @@ const pptxgen = require('pptxgenjs');
 const sharp = require('sharp');
 const { applyTheme } = require('./apply_theme.js') /* pptx skill helper; optional */;
 const D = '/home/claude/DriveShare/docs/';
-const THEME = { name: 'DriveShare', headFontFace: 'Arial', bodyFontFace: 'Calibri',
-  colors: { dk1: '15131F', lt1: 'FFFFFF', dk2: '1B1640', lt2: 'F1EFFF', accent1: '4F3DF5', accent2: 'F2A900',
-            accent3: '12805C', accent4: 'C4314B', accent5: '8A7BFF', accent6: '6B6B76', hlink: '4F3DF5', folHlink: '3A2BC4' } };
+const THEME = { name: 'DriveShare Mono', headFontFace: 'Arial', bodyFontFace: 'Calibri',
+  colors: { dk1: '000000', lt1: 'FFFFFF', dk2: '000000', lt2: 'F2F2F2', accent1: '000000', accent2: '404040',
+            accent3: '595959', accent4: '7F7F7F', accent5: 'BFBFBF', accent6: '595959', hlink: '000000', folHlink: '404040' } };
 
 (async () => {
   const pres = new pptxgen();
@@ -26,10 +26,15 @@ const THEME = { name: 'DriveShare', headFontFace: 'Arial', bodyFontFace: 'Calibr
     slideNumber: { x: 12.2, y: 7.0, w: 0.5, h: 0.3, fontSize: 10, color: C.accent6, align: 'right' } });
 
   const img = async (slide, file, box) => {      // fit image inside box keeping aspect ratio
-    const m = await sharp(D + file).metadata();
+    // black-and-white deck: embed a grayscale copy of every screenshot / diagram
+    const fs = require('fs'), path = require('path');
+    const gray = '/tmp/claude-0/bw/' + file;
+    fs.mkdirSync(path.dirname(gray), { recursive: true });
+    await sharp(D + file).grayscale().toFile(gray);
+    const m = await sharp(gray).metadata();
     const r = Math.min(box.w / m.width, box.h / m.height);
     const w = m.width * r, h = m.height * r;
-    slide.addImage({ path: D + file, x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h, altText: file });
+    slide.addImage({ path: gray, x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h, altText: file });
   };
   const card = (slide, x, y, w, h, fill) => slide.addShape(pres.shapes.ROUNDED_RECTANGLE,
     { x, y, w, h, rectRadius: 0.12, fill: { color: fill || C.background2 }, line: { color: fill || C.background2 } });
@@ -116,7 +121,7 @@ const THEME = { name: 'DriveShare', headFontFace: 'Arial', bodyFontFace: 'Calibr
     s = add('Design'); s.addText(`${name}: ${headline}`, { placeholder: 'title' });
     chip(s, file, 0.6, 1.5, 3.6);
     s.addText(bullets(pts), { x: 0.6, y: 2.15, w: 4.7, h: 4.6, fontSize: 16, color: C.text1, valign: 'top', isTextBox: true });
-    card(s, 5.6, 1.45, 7.1, 5.35, 'F7F7FA');
+    card(s, 5.6, 1.45, 7.1, 5.35, 'F7F7F7');
     await img(s, diagram, { x: 5.75, y: 1.6, w: 6.8, h: 5.05 });
   }
 
@@ -126,7 +131,7 @@ const THEME = { name: 'DriveShare', headFontFace: 'Arial', bodyFontFace: 'Calibr
     s = add('Code'); s.addText(title, { placeholder: 'title' });
     chip(s, file, 0.6, 1.5, 3.6);
     s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 2.1, w: 7.6, h: 4.7, rectRadius: 0.1, fill: { color: C.text2 }, line: { color: C.text2 } });
-    s.addText(snippet, { x: 0.85, y: 2.25, w: 7.2, h: 4.45, fontFace: 'Courier New', fontSize: 12, color: 'E8E6FF', valign: 'top', margin: 0, isTextBox: true });
+    s.addText(snippet, { x: 0.85, y: 2.25, w: 7.2, h: 4.45, fontFace: 'Courier New', fontSize: 12, color: 'FFFFFF', valign: 'top', margin: 0, isTextBox: true });
     s.addText(bullets(notes), { x: 8.6, y: 2.1, w: 4.1, h: 4.7, fontSize: 16, color: C.text1, valign: 'top', isTextBox: true });
   };
   code('Code walkthrough: Observer', 'patterns/observer.py',
@@ -203,7 +208,7 @@ def build_recovery_chain(db, on_reset=None):
     ['Watch list (Observer), messaging, notifications', 'Your Name'], ['Payment (Proxy), history, reviews', 'Your Name'],
     ['UI templates and Mediator JavaScript', 'Your Name'], ['Tests, report, slides, video', 'Your Name']];
   s.addTable(rows.map((r, i) => r.map(t => ({ text: t, options: i === 0 ? { bold: true, color: C.background1, fill: { color: C.accent1 } } : { color: C.text1, fill: { color: i % 2 ? C.background1 : C.background2 } } }))),
-    { x: 0.6, y: 1.5, w: 12.1, colW: [8.6, 3.5], fontSize: 15, rowH: 0.52, border: { type: 'solid', pt: 0.5, color: 'E6E6EC' }, valign: 'middle' });
+    { x: 0.6, y: 1.5, w: 12.1, colW: [8.6, 3.5], fontSize: 15, rowH: 0.52, border: { type: 'solid', pt: 0.5, color: 'D9D9D9' }, valign: 'middle' });
 
   // 17 Close
   s = add('Wrap-up', 'DARK');
