@@ -13,13 +13,18 @@ import logging
 import os
 import secrets
 
-from flask import Flask, g
+from flask import Flask, g, url_for
 
-from driveshare import database
-from driveshare.services import auth_service, notification_service
+from . import database
+from .services import auth_service, car_service, notification_service
 
 
 def create_app(test_config=None):
+    """Create and configure a Flask application instance.
+
+    Optional test settings override defaults before the database is initialized,
+    allowing tests to use isolated databases and output files.
+    """
     app = Flask(__name__, instance_relative_config=True)
     os.makedirs(app.instance_path, exist_ok=True)
 
@@ -58,7 +63,13 @@ def create_app(test_config=None):
         except (TypeError, ValueError):
             return value or ""
 
-    from driveshare.routes import api_bp, auth_bp, main_bp
+    @app.template_filter("car_image")
+    def format_car_image(car):
+        """Return a local image URL chosen for this listing's vehicle category."""
+        filename = car_service.car_image_path(car["car_type"])
+        return url_for("static", filename=filename)
+
+    from .routes import api_bp, auth_bp, main_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
     app.register_blueprint(api_bp)

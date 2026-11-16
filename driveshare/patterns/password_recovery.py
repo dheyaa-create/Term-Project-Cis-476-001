@@ -44,6 +44,8 @@ GENERIC_FAILURE = "The answers you provided do not match our records."
 
 @dataclass
 class RecoveryRequest:
+    """Data passed through the recovery chain for one reset attempt."""
+
     user_id: int
     answers: List[str]
     new_password: str
@@ -53,6 +55,8 @@ class RecoveryRequest:
 
 @dataclass
 class RecoveryResult:
+    """Outcome returned by the first handler that rejects, or by chain success."""
+
     success: bool
     message: str
     failed_at: Optional[str] = None
@@ -64,6 +68,7 @@ class RecoveryHandler(ABC):
     name = "handler"
 
     def __init__(self, db):
+        """Bind this handler to the database shared by the full chain."""
         self.db = db
         self._next: Optional["RecoveryHandler"] = None
 
@@ -73,6 +78,7 @@ class RecoveryHandler(ABC):
         return handler
 
     def handle(self, request) -> RecoveryResult:
+        """Run this check, record its pass, and forward to the next handler."""
         result = self.check(request)
         if result is not None:            # this link rejected the request
             return result
@@ -87,9 +93,12 @@ class RecoveryHandler(ABC):
 
 
 class AccountLockoutHandler(RecoveryHandler):
+    """Stop recovery before revealing or processing a locked-out account."""
+
     name = "lockout"
 
     def check(self, request):
+        """Reject unknown users and accounts that reached the failed-attempt limit."""
         row = self.db.execute("SELECT failed_recovery FROM users WHERE id = ?",
                               (request.user_id,)).fetchone()
         if row is None:
@@ -104,11 +113,13 @@ class SecurityQuestionHandler(RecoveryHandler):
     """One link per security question (position 1, 2 or 3)."""
 
     def __init__(self, db, position):
+        """Configure the handler for one numbered security question."""
         super().__init__(db)
         self.position = position
         self.name = f"question_{position}"
 
     def check(self, request):
+        """Verify this position's answer and count a failed attempt if incorrect."""
         row = self.db.execute(
             "SELECT answer_hash FROM security_questions WHERE user_id = ? AND position = ?",
             (request.user_id, self.position)).fetchone()
@@ -126,10 +137,12 @@ class PasswordResetHandler(RecoveryHandler):
     name = "reset"
 
     def __init__(self, db, on_reset=None):
+        """Set up the final password update and optional session-revocation hook."""
         super().__init__(db)
         self._on_reset = on_reset          # e.g. revoke sessions via SessionManager
 
     def check(self, request):
+        """Validate and store the new password, resetting lockout on success."""
         problem = password_problem(request.new_password)
         if problem:
             return RecoveryResult(False, problem, self.name)

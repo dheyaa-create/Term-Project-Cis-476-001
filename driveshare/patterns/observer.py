@@ -58,6 +58,7 @@ class WatchObserver(CarObserver):
     """
 
     def __init__(self, watch, is_available, notifier):
+        """Store the watch and injected callbacks used to evaluate and notify."""
         self.watch = watch
         self._is_available = is_available
         self._notifier = notifier
@@ -74,6 +75,7 @@ class WatchObserver(CarObserver):
         return True
 
     def update(self, car, event):
+        """Notify the renter when this event makes all watch criteria true."""
         if not self.criteria_met(car):
             return
         parts = []
@@ -98,22 +100,31 @@ class CarListingSubject:
     """Subject that broadcasts changes of a single car listing."""
 
     def __init__(self, car):
+        """Create a subject around the current snapshot of one car."""
         self.car = car
         self._observers = []
 
     def attach(self, observer):
+        """Subscribe an observer once, preserving registration order."""
         if observer not in self._observers:
             self._observers.append(observer)
 
     def detach(self, observer):
+        """Unsubscribe an observer if it is currently attached."""
         if observer in self._observers:
             self._observers.remove(observer)
 
     @property
     def observers(self):
+        """Expose a read-only snapshot so callers cannot mutate subscriptions."""
         return tuple(self._observers)
 
     def notify_observers(self, event):
+        """Broadcast the event to a snapshot of subscribers.
+
+        Iterating over a copy ensures an observer can detach itself during an
+        update without disrupting delivery to the remaining observers.
+        """
         for observer in list(self._observers):
             observer.update(self.car, event)
 
@@ -125,6 +136,7 @@ class CarEventPublisher:
     """
 
     def __init__(self, load_car, load_watches, is_available, notifier, on_triggered=None):
+        """Inject data access, availability, notification, and bookkeeping hooks."""
         self._load_car = load_car            # car_id -> dict | None
         self._load_watches = load_watches    # car_id -> list[dict]
         self._is_available = is_available
@@ -132,6 +144,11 @@ class CarEventPublisher:
         self._on_triggered = on_triggered    # watch dict -> None (bookkeeping)
 
     def publish(self, car_id, event, only_watch_id=None):
+        """Load a car's observers, broadcast an event, and return triggered watches.
+
+        ``only_watch_id`` is used when a renter first creates a watch so only
+        that newly created watch is evaluated immediately.
+        """
         car = self._load_car(car_id)
         if car is None or not car.get("is_active", 1):
             return []

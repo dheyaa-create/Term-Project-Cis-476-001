@@ -31,12 +31,18 @@ QUESTION_CHOICES = [
 
 
 class AuthError(ValueError):
+    """Raised when account data or an authentication operation is invalid."""
+
     pass
 
 
 def register_user(db, name, email, password, questions, answers):
     """
     Create a user with three security questions.
+
+    Input is normalized and validated before any rows are written. Passwords
+    and answers are stored as salted hashes, and the user plus all three
+    question rows are committed together.
 
     :param questions: list of 3 question strings (must be distinct)
     :param answers:   list of 3 answer strings (must be non-empty)
@@ -70,7 +76,11 @@ def register_user(db, name, email, password, questions, answers):
 
 
 def authenticate(db, email, password):
-    """Return the user row if the credentials are valid, else ``None``."""
+    """Return the account row for valid credentials, otherwise ``None``.
+
+    Email matching is case-insensitive by normalization. The password itself
+    is checked against the stored hash and is never persisted by this helper.
+    """
     user = db.execute("SELECT * FROM users WHERE email = ?",
                       ((email or "").strip().lower(),)).fetchone()
     if user and verify_password(user["password_hash"], password):
@@ -79,18 +89,27 @@ def authenticate(db, email, password):
 
 
 def login_user(user_id):
-    """Ask the Singleton for a token and keep it in the signed cookie."""
+    """Create a server-side session and store its opaque token in Flask's cookie.
+
+    Clearing the prior cookie state prevents stale recovery or authentication
+    values from being carried into the newly authenticated session.
+    """
     session.clear()
     session["token"] = SessionManager().create_session(user_id)
 
 
 def logout_user():
+    """Revoke the current server-side session and clear all cookie state."""
     SessionManager().end_session(session.get("token"))
     session.clear()
 
 
 def load_current_user():
-    """``before_request`` hook: resolve the token to ``g.user``."""
+    """Resolve the cookie token into ``g.user`` before each request.
+
+    Expired or revoked tokens are removed from the cookie so downstream views
+    see either a valid user row or an unauthenticated request.
+    """
     g.user = None
     user_id = SessionManager().get_user_id(session.get("token"))
     if user_id is not None:
@@ -100,9 +119,10 @@ def load_current_user():
 
 
 def login_required(view):
-    """Decorator protecting views that need an authenticated user."""
+    """Protect a view and preserve its URL as the post-login destination."""
     @wraps(view)
     def wrapped(*args, **kwargs):
+        """Redirect anonymous requests; otherwise call the original view."""
         if g.get("user") is None:
             flash("Please log in to continue.", "warning")
             return redirect(url_for("auth.login", next=request.path))
@@ -111,5 +131,6 @@ def login_required(view):
 
 
 def get_questions(db, user_id):
+    """Fetch a user's recovery prompts in their numbered presentation order."""
     return db.execute("SELECT position, question FROM security_questions "
                       "WHERE user_id = ? ORDER BY position", (user_id,)).fetchall()

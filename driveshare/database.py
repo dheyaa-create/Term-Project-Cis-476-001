@@ -31,6 +31,8 @@ from flask import g, current_app
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 
+-- A user owns cars and holds a simulated wallet balance. Passwords are stored
+-- only as hashes; failed_recovery tracks recovery attempts for lockout.
 CREATE TABLE IF NOT EXISTS users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     email           TEXT    NOT NULL UNIQUE,
@@ -41,6 +43,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One row per recovery question. Position keeps the three answers in a
+-- stable order, while the unique constraint prevents duplicate positions.
 CREATE TABLE IF NOT EXISTS security_questions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -50,6 +54,8 @@ CREATE TABLE IF NOT EXISTS security_questions (
     UNIQUE (user_id, position)
 );
 
+-- Listing details belong to an owner. Optional vehicle details may be NULL;
+-- is_active hides a listing without deleting its related history.
 CREATE TABLE IF NOT EXISTS cars (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -69,6 +75,8 @@ CREATE TABLE IF NOT EXISTS cars (
     created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Availability is represented as half-open time windows [start_time, end_time).
+-- The CHECK prevents empty or reversed windows.
 CREATE TABLE IF NOT EXISTS car_availability (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     car_id     INTEGER NOT NULL REFERENCES cars(id) ON DELETE CASCADE,
@@ -77,6 +85,8 @@ CREATE TABLE IF NOT EXISTS car_availability (
     CHECK (end_time > start_time)
 );
 
+-- A booking reserves a car for one renter and progresses through the
+-- lifecycle documented in booking_service.py.
 CREATE TABLE IF NOT EXISTS bookings (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     car_id      INTEGER NOT NULL REFERENCES cars(id) ON DELETE CASCADE,
@@ -90,6 +100,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     CHECK (end_time > start_time)
 );
 
+-- Successful simulated payments are unique per booking, preventing a second
+-- payment record from being attached to the same reservation.
 CREATE TABLE IF NOT EXISTS payments (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     booking_id INTEGER NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
@@ -100,6 +112,8 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Each renter can keep one watch per car. Either a price threshold, a date
+-- window, or both may be used to decide when to send a notification.
 CREATE TABLE IF NOT EXISTS watches (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     renter_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -113,6 +127,8 @@ CREATE TABLE IF NOT EXISTS watches (
     UNIQUE (renter_id, car_id)
 );
 
+-- In-app messages shown in the notification center. The optional link lets
+-- the interface direct the user to the related booking, car, or conversation.
 CREATE TABLE IF NOT EXISTS notifications (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -123,6 +139,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Direct messages are stored as sender/recipient pairs. If a related car is
+-- removed, SET NULL preserves the conversation rather than deleting it.
 CREATE TABLE IF NOT EXISTS messages (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     sender_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -133,6 +151,8 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Reviews are tied to a rental and reviewer. The unique key permits each
+-- participant to submit at most one review for that booking.
 CREATE TABLE IF NOT EXISTS reviews (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     booking_id  INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
@@ -159,6 +179,8 @@ BEGIN
     SELECT RAISE(ABORT, 'Car is already booked for an overlapping period');
 END;
 
+-- Indexes support the common lookup paths used by booking checks, availability
+-- queries, notification badges, and Observer watch publication.
 CREATE INDEX IF NOT EXISTS idx_bookings_car  ON bookings(car_id, start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_avail_car     ON car_availability(car_id);
 CREATE INDEX IF NOT EXISTS idx_notif_user    ON notifications(user_id, is_read);
@@ -167,7 +189,12 @@ CREATE INDEX IF NOT EXISTS idx_watch_car     ON watches(car_id, active);
 
 
 def _connect(path):
-    """Open a SQLite connection that returns rows addressable by column name."""
+    """Open a SQLite connection with the settings used throughout the app.
+
+    ``sqlite3.Row`` allows services and templates to access query results by
+    column name. Foreign-key enforcement is enabled per connection because
+    SQLite does not enable it globally by default.
+    """
     conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -187,14 +214,22 @@ def get_db():
 
 
 def close_db(_exc=None):
-    """Teardown hook: close the per-request connection if one was opened."""
+    """Flask teardown hook that releases the lazy request-scoped connection.
+
+    Flask may call this hook even when a request never needed the database, so
+    the connection is removed from ``g`` and closed only when it exists.
+    """
     db = g.pop("db", None)
     if db is not None:
         db.close()
 
 
 def init_db(path):
-    """Create every table (idempotent - safe to call on each start-up)."""
+    """Ensure the database directory and complete schema exist.
+
+    Schema statements use ``IF NOT EXISTS``, making initialization safe to run
+    at every application startup without replacing existing user data.
+    """
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     conn = _connect(path)
     conn.executescript(SCHEMA)
@@ -203,6 +238,10 @@ def init_db(path):
 
 
 def init_app(app):
-    """Register the teardown hook and make sure the schema exists."""
+    """Attach database lifecycle handling and initialize this app's database.
+
+    The application factory calls this once for each Flask app instance. The
+    configured database path isolates test databases from the normal database.
+    """
     app.teardown_appcontext(close_db)
     init_db(app.config["DATABASE"])

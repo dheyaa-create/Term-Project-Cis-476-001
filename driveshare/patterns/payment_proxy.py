@@ -38,6 +38,8 @@ audit_log = logging.getLogger("driveshare.payments")
 
 @dataclass
 class PaymentRequest:
+    """Payment input; ``payer_id`` comes from the authenticated application user."""
+
     booking_id: int
     payer_id: int            # the user clicking "Pay" (from SessionManager)
     amount: float
@@ -46,6 +48,8 @@ class PaymentRequest:
 
 @dataclass
 class PaymentResult:
+    """Structured payment outcome returned by both proxy and gateway."""
+
     success: bool
     message: str
     reference: str = ""
@@ -63,6 +67,7 @@ class PaymentGateway(ABC):
 
     @abstractmethod
     def process_payment(self, request: PaymentRequest) -> PaymentResult:
+        """Process a payment request and return its result."""
         ...
 
 
@@ -70,9 +75,15 @@ class SimulatedPaymentGateway(PaymentGateway):
     """Real subject: performs the (simulated) money transfer atomically."""
 
     def __init__(self, db):
+        """Retain the connection used for the atomic wallet and booking updates."""
         self.db = db
 
     def process_payment(self, request):
+        """Move the simulated funds and persist the payment as one transaction.
+
+        Any database error rolls back all balance, payment, and booking-status
+        changes before it is re-raised to the caller.
+        """
         db = self.db
         booking = db.execute(
             "SELECT b.*, c.owner_id FROM bookings b JOIN cars c ON c.id = b.car_id "
@@ -101,16 +112,19 @@ class PaymentProxy(PaymentGateway):
     """Protection + virtual proxy in front of ``SimulatedPaymentGateway``."""
 
     def __init__(self, db, gateway_factory=SimulatedPaymentGateway):
+        """Create a validating proxy without constructing its gateway yet."""
         self.db = db
         self._gateway_factory = gateway_factory
         self._real_gateway = None           # created lazily
 
     def _gateway(self):
+        """Lazily construct and then reuse the wrapped payment gateway."""
         if self._real_gateway is None:
             self._real_gateway = self._gateway_factory(self.db)
         return self._real_gateway
 
     def _validate(self, request):
+        """Raise ``PaymentError`` unless identity, state, amount, and funds are valid."""
         if not request.payer_id:
             raise PaymentError("You must be logged in to pay.")
         booking = self.db.execute("SELECT * FROM bookings WHERE id = ?",
@@ -131,6 +145,7 @@ class PaymentProxy(PaymentGateway):
             raise PaymentError(f"Insufficient balance (${balance:.2f}).")
 
     def process_payment(self, request):
+        """Audit a request, reject failed checks, or delegate an approved payment."""
         masked = f"**** **** **** {str(request.card_last4)[-4:]}"
         try:
             self._validate(request)

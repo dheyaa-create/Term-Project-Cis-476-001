@@ -28,11 +28,17 @@ FMT = "%Y-%m-%dT%H:%M"
 
 
 def day(offset, hour=9):
+    """Format a local date-time a number of days from now for demo records."""
     d = datetime.now().replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=offset)
     return d.strftime(FMT)
 
 
 def main():
+    """Reset the configured demo database and insert reproducible sample data.
+
+    This script intentionally removes the existing database and simulated
+    email outbox before rebuilding them; run it only when demo data is desired.
+    """
     app = create_app()
     db_path = app.config["DATABASE"]
     for path in (db_path, app.config["EMAIL_OUTBOX"]):

@@ -24,6 +24,7 @@ def t(days, hour=10):
 
 @pytest.fixture
 def app(tmp_path):
+    """Create an isolated app with owner, renters, and one available car."""
     app = create_app({"TESTING": True, "DATABASE": str(tmp_path / "test.db"),
                       "EMAIL_OUTBOX": str(tmp_path / "outbox.log")})
     with app.app_context():
@@ -40,9 +41,11 @@ def app(tmp_path):
 
 @pytest.fixture
 def ctx(app):
+    """Provide the test app's database connection inside its app context."""
     with app.app_context():
         yield get_db()
 
 
 def login(client, email):
+    """Authenticate a test client using the shared fixture password."""
     return client.post("/login", data={"email": email, "password": "Password1"})

@@ -9,11 +9,11 @@
 
 ## 1. Overview
 
-DriveShare is a Flask web application backed by SQLite. It uses a three-layer structure:
+DriveShare is a Flask web application backed by SQLite. It follows a three-layer architecture so that each concern stays separate and easier to maintain:
 
-1. **Presentation**: Jinja2 templates plus `static/js/mediator.js`. The JavaScript Mediator coordinates the interactive widgets.
-2. **Application**: `routes.py` has thin Flask controllers that delegate to the `services/` modules, which hold the business rules.
-3. **Patterns and persistence**: `patterns/` contains the six GoF design patterns. `database.py` defines the schema.
+1. **Presentation layer**: Jinja2 templates and `static/js/mediator.js` provide the user interface. The JavaScript Mediator centralises communication between interface components and keeps them loosely coupled.
+2. **Application layer**: `routes.py` contains thin Flask controllers; they parse request data, call the right service, and render responses. The real business logic lives in `services/`.
+3. **Patterns + persistence layer**: `patterns/` contains the six GoF design patterns used in the project, while `database.py` defines the SQLite schema and database initialization.
 
 ![Architecture](diagrams/architecture.png)
 
@@ -34,84 +34,99 @@ DriveShare is a Flask web application backed by SQLite. It uses a three-layer st
 | Rental history | `templates/bookings.html` (renter and owner tabs) |
 | Reviews | `community_service.add_review`, profile and car pages |
 
+### 1.1 Feature order and implementation status
+
+The project is organised in the same order as the functional requirements, which makes the system easier to understand and test incrementally:
+
+1. **User registration and authentication** — sign-up, login, password validation, and three security questions are handled in `services/auth_service.py` and the auth templates.
+2. **Car listing and management** — owners create, update, and manage listings through the Builder in `patterns/car_builder.py` and the service layer in `services/car_service.py`.
+3. **Booking safety** — overlapping rentals are blocked both in application code and in the database trigger inside `database.py`, creating a layered defence.
+4. **Search and booking** — renters browse, filter, and book cars using the search logic and booking lifecycle in `services/car_service.py` and `services/booking_service.py`.
+5. **Watch notifications** — the Observer pattern in `patterns/observer.py` tracks price/date criteria and sends notifications when conditions are met.
+6. **Messaging and notifications** — owners and renters communicate through message threads, while notification delivery and simulated emails are produced by `services/notification_service.py`.
+7. **Payment** — the Proxy pattern validates transactions before updating balances and marking a booking as paid.
+8. **Rental history and reviews** — both sides can inspect completed rentals and leave ratings through the booking history and profile pages.
+
 ---
 
 ## 2. Class diagrams and descriptions
 
-The diagrams were drawn from the code. The Mermaid sources are in `docs/diagrams/*.mmd`, so the diagrams can be regenerated whenever the code changes.
+The diagrams were drawn directly from the implemented code, and their Mermaid sources are stored in `docs/diagrams/*.mmd` so they can be regenerated whenever the application evolves.
 
 ### 2.1 Singleton – `SessionManager` (`patterns/session_manager.py`)
 
 ![Singleton](diagrams/singleton.png)
 
-`SessionManager.__new__` uses double-checked locking, so only one instance exists per process, even when Flask runs multiple threads. That instance is the only place that:
+`SessionManager.__new__` uses double-checked locking, which ensures only one instance exists per process even when Flask is serving multiple requests concurrently. This singleton is the single source of truth for:
 
-- issues 256-bit random tokens (`secrets.token_urlsafe(32)`);
-- stores only the SHA-256 hash of each token, so a memory dump does not reveal usable tokens;
-- applies a sliding 30-minute idle timeout;
-- revokes sessions on logout, and revokes all of a user's sessions after a password reset.
+- creating secure random session tokens (`secrets.token_urlsafe(32)`);
+- storing only the SHA-256 hash of each token, so a memory dump does not expose a usable session cookie;
+- enforcing a sliding 30-minute idle timeout;
+- revoking sessions on logout and revoking all sessions for a user after a password reset.
 
-The browser holds the raw token only inside Flask's signed, HttpOnly cookie. `auth_service.load_current_user` runs before each request and resolves the token to `g.user`.
+The browser stores the raw token only inside Flask's signed, HttpOnly cookie. `auth_service.load_current_user` runs before each request and resolves the token to `g.user`.
 
 ### 2.2 Builder – `CarListingBuilder` (`patterns/car_builder.py`)
 
 ![Builder](diagrams/builder.png)
 
-A listing has six required attributes and many optional ones. The builder exposes a fluent interface: each `set_*` / `add_*` method validates its own input and returns `self`. `build()` checks that all required parts are present and returns an immutable `CarListing` (a frozen dataclass).
+A vehicle listing contains six required attributes and several optional ones. The builder exposes a fluent interface where each `set_*` or `add_*` method validates its input and returns `self`, allowing the object to be assembled step by step.
 
-`CarListingDirector` holds reusable recipes such as `economy_sedan` and `family_suv`, which `seed.py` uses. `car_service.builder_from_form` drives the builder from the HTML form. Editing a listing re-runs the builder, so the same validation applies to create and update.
+`build()` checks that every required attribute has been provided and then returns an immutable `CarListing` dataclass. This makes invalid listings fail early and keeps construction logic well organised.
+
+`CarListingDirector` provides reusable recipes such as `economy_sedan` and `family_suv`, which are used by `seed.py` to populate demo data. `car_service.builder_from_form` reuses the same builder pattern to turn HTML form submissions into a valid listing object, so create and edit operations share one validation path.
 
 ### 2.3 Observer – watch notifications (`patterns/observer.py`)
 
 ![Observer](diagrams/observer.png)
 
-- **Subject:** `CarListingSubject` wraps one car and keeps a list of `CarObserver`s.
-- **Concrete observer:** `WatchObserver`, one per active row in `watches`. `update()` checks the renter's criteria (`price_per_day ≤ max_price` and/or the car being available and unbooked for the requested window). It notifies only when every criterion is met.
-- **Publisher:** `CarEventPublisher` loads the active watches for a car, attaches a `WatchObserver` for each, and fires the event. The availability checker and the notifier are injected, so the pattern code has no dependency on SQL or Flask and can be unit-tested with plain dictionaries.
-- **Events that trigger it:** `PRICE_CHANGED` (owner edits price), `AVAILABILITY_CHANGED` (owner adds a window), `BOOKING_RELEASED` (a booking is cancelled or declined, which frees the dates), and `WATCH_CREATED` (a new watch is evaluated immediately).
+- **Subject:** `CarListingSubject` wraps a single car and keeps a list of observers.
+- **Concrete observer:** `WatchObserver`, one per active row in the `watches` table. `update()` checks whether the renter's criteria are satisfied (`price_per_day <= max_price` and/or the car is available for the requested dates). It only sends a notification when all conditions are met.
+- **Publisher:** `CarEventPublisher` loads active watches for a car, attaches one `WatchObserver` per watch, and triggers the event. The availability checker and notifier are injected, so the pattern code does not depend on Flask or SQL and can be unit-tested with plain dictionaries.
+- **Events that trigger it:** `PRICE_CHANGED` (owner edits price), `AVAILABILITY_CHANGED` (owner adds a new window), `BOOKING_RELEASED` (a booking is cancelled or declined and dates are free again), and `WATCH_CREATED` (a new watch is evaluated immediately).
 
 ### 2.4 Mediator – UI components (`static/js/mediator.js`)
 
 ![Mediator](diagrams/mediator.png)
 
-Components never reference each other. They call `emit(event, payload)`, and their mediator decides what happens next.
+The UI components never call one another directly. Instead, they emit events, and the mediator decides what the next action should be.
 
 | Mediator | Components | Coordination |
 |---|---|---|
-| `BookingMediator` (car page) | `DateRangePicker`, `PriceQuote`, `BookButton`, `WatchForm` | On `datesChanged` it calls `/api/quote`, then shows the price or the reason the car is unavailable, enables or disables the Book button, pre-fills the Watch form with the same dates, and highlights it when the car is unavailable. |
-| `SearchMediator` (search page) | `SearchFilters`, `ResultsList`, `ResultCount` | On `filtersChanged` (debounced) it calls `/api/search`, re-renders the results and the count, and updates the URL. |
-| `NavMediator` (every page) | `Poller`, `NotificationBell`, `Toast` | On each `tick` it fetches the unread count, updates the bell badge, and shows a toast if new notifications arrived. |
+| `BookingMediator` (car page) | `DateRangePicker`, `PriceQuote`, `BookButton`, `WatchForm` | On `datesChanged`, it calls `/api/quote`, displays the computed price or reason for unavailability, enables or disables the Book button, and pre-fills the Watch form with the same dates. |
+| `SearchMediator` (search page) | `SearchFilters`, `ResultsList`, `ResultCount` | On `filtersChanged` (debounced), it calls `/api/search`, re-renders search results, and updates the result count and URL state. |
+| `NavMediator` (every page) | `Poller`, `NotificationBell`, `Toast` | On each tick, it checks unread notification counts, updates the bell badge, and displays a toast when a new notification arrives. |
 
 ### 2.5 Proxy – payment (`patterns/payment_proxy.py`)
 
 ![Proxy](diagrams/proxy.png)
 
-`PaymentProxy` and `SimulatedPaymentGateway` both implement `PaymentGateway`. The service layer only ever talks to the proxy. Before delegating, the proxy runs these checks:
+`PaymentProxy` and `SimulatedPaymentGateway` both implement `PaymentGateway`. The service layer only ever interacts with the proxy, never with the real gateway directly. Before delegating the payment, the proxy performs the following checks:
 
 1. **Authentication:** the payer is logged in.
 2. **Authorisation:** the payer is the renter on the booking.
 3. **State:** the booking is confirmed and not already paid (idempotency).
-4. **Integrity:** the amount equals the booking total.
-5. **Funds:** the renter's balance is sufficient.
-6. **Audit:** it logs the request with the card number masked.
+4. **Integrity:** the payment amount matches the booking total.
+5. **Funds:** the renter has enough balance.
+6. **Audit:** the request is logged with the card number masked.
 
-The real gateway is created lazily, only when a payment passes every check (virtual-proxy behaviour). It debits the renter, credits the owner, writes a `payments` row and marks the booking `paid`, all in one transaction. `community_service.pay_booking` then notifies both parties.
+The real gateway is created lazily, only when a payment passes all checks (virtual-proxy behaviour). It debits the renter, credits the owner, writes a `payments` row, and marks the booking as `paid`, all in one transaction. `community_service.pay_booking` then sends notifications to both sides.
 
 ### 2.6 Chain of Responsibility – password recovery (`patterns/password_recovery.py`)
 
 ![Chain](diagrams/chain.png)
 
-`build_recovery_chain` links the handlers:
+`build_recovery_chain` links the handlers in sequence:
 
 ```
 AccountLockoutHandler → SecurityQuestionHandler(1) → SecurityQuestionHandler(2) → SecurityQuestionHandler(3) → PasswordResetHandler
 ```
 
-Each handler either returns a failure, which stops the chain, or passes the request to its successor. The three question handlers are built from the user's three security questions.
+Each handler either rejects the request and stops the chain, or passes it to the next handler. The three security-question handlers are created from the user's three stored questions.
 
-- A failed answer increments `users.failed_recovery`. After 5 failures, the lockout handler stops all further attempts.
-- All three answers are submitted together and every failure returns the same generic message, so an attacker cannot tell which answer was wrong.
-- The final handler enforces password strength, stores the new hash, resets the counter, and calls `SessionManager().end_all_sessions_for(user_id)`.
+- A failed answer increments `users.failed_recovery`. After 5 failures, the lockout handler rejects all further attempts.
+- Every recovery request submits all three answers at once and every failure returns the same generic message, so an attacker cannot tell which security answer was wrong.
+- The final handler validates the new password, stores its hash, resets the recovery counter, and invalidates all active sessions for that user.
 
 ---
 
@@ -121,12 +136,80 @@ Each handler either returns a failure, which stops the chain, or passes the requ
 
 | Table | Purpose / key constraints |
 |---|---|
-| `users` | Account, `password_hash`, simulated `balance` (starts at $1,000), `failed_recovery` counter. `email` is unique. |
-| `security_questions` | Exactly three rows per user (`position` 1–3, unique per user). Answers are hashed after normalisation (trimmed, lower-case). |
-| `cars` | Listing created by the Builder. Optional columns are nullable. `is_active` hides a listing without deleting its history. |
-| `car_availability` | Windows in which the owner offers the car. `CHECK end_time > start_time`. Adjacent or overlapping windows are merged when checked. |
-| `bookings` | `status` ∈ pending / confirmed / paid / declined / cancelled. The trigger `prevent_double_booking` aborts any insert that overlaps an active booking of the same car. |
-| `payments` | One per booking (`booking_id` unique), payer, payee, amount and a simulated reference. |
+| `users` | Stores account data, hashed passwords, a simulated `balance` starting at $1,000, and a `failed_recovery` counter. `email` is unique. |
+| `security_questions` | Stores exactly three rows per user (`position` 1–3) with a unique constraint per user. Answers are hashed after normalization (trimmed, lower-case, whitespace collapsed). |
+| `cars` | Represents a listing created by the Builder. Optional values are nullable; `is_active` hides a listing without deleting its history. |
+| `car_availability` | Contains windows in which the owner makes the car available for rental. `CHECK end_time > start_time` ensures valid date windows. |
+| `bookings` | Stores each reservation with `status` in pending / confirmed / paid / declined / cancelled. The trigger `prevent_double_booking` prevents overlaps. |
+| `payments` | Records successful payments, including payer, payee, amount, and a simulated transaction reference. Each booking may have at most one payment row. |
+| `watches` | Stores renter watch criteria (target price and optional date window) for a particular car. Each renter/car pair is unique. |
+| `notifications` | Stores in-app notifications, each associated with a user and a kind such as booking, payment, watch, review, or message. |
+| `messages` | Stores direct owner-renter communication, including optional `car_id` context. |
+| `reviews` | Stores owner or renter reviews after a completed rental. Each reviewer can post only one review per booking. |
+
+The schema is intentionally simple but robust: it enforces critical constraints in SQLite itself, and the application code validates user input before inserting data. This reduces the chance of inconsistent states and protects the system against race conditions or malformed requests.
+
+---
+
+## 4. Design pattern rationale and trade-offs
+
+The project intentionally uses multiple GoF patterns to mirror the requested assignment and to make the code easier to reason about.
+
+### 4.1 Singleton (`SessionManager`)
+
+The singleton pattern is appropriate because the application has a single, process-wide notion of authentication state. If each module kept its own session map, the system could drift into inconsistent login state. The singleton centralises session creation, lookup, invalidation, and expiry.
+
+**Trade-off:** a process-wide in-memory session store is easy to reason about, but it is not shared across multiple application instances. For a distributed deployment, a server-side cache or database-backed session layer would be needed.
+
+### 4.2 Builder (`CarListingBuilder`)
+
+The builder pattern is ideal for complex domain objects with required and optional attributes. It prevents constructors from becoming unwieldy and ensures validation is co-located with the fields it validates.
+
+**Trade-off:** it adds a layer of indirection compared to a direct constructor, but in return it reduces bugs and makes the code read more clearly.
+
+### 4.3 Observer (`WatchObserver`)
+
+The observer pattern is well suited to a watchlist: a car may change price or availability, and many renters may want to be notified independently without coupling the listing code to notification logic.
+
+**Trade-off:** the event system adds abstract layers, but it keeps the subject clean and makes it easy to extend with new event types such as booking releases or new watch evaluation.
+
+### 4.4 Mediator (`static/js/mediator.js`)
+
+The mediator pattern simplifies the front-end by reducing direct component coupling. Different UI widgets can react to the same events without knowing about one another.
+
+**Trade-off:** the mediator becomes a central coordination point, so large front-end logic can become complex if too many components depend on it.
+
+### 4.5 Proxy (`PaymentProxy`)
+
+The proxy pattern protects the application from directly invoking a payment processor. It performs validation and audit logging before performing the real transaction, which improves security and maintains separation of concerns.
+
+**Trade-off:** the extra validation layer adds some overhead, but it is worth it because it ensures the system never sends an unsecured or unauthorised payment request.
+
+### 4.6 Chain of responsibility (`build_recovery_chain`)
+
+This pattern is appropriate because password recovery is a sequence of checks that should be easy to order, extend, and test. Each security question is independent and should be evaluated in a consistent order.
+
+**Trade-off:** the chain adds object indirection, but it reduces `if/elif` complexity and makes future rule changes easier.
+
+---
+
+## 5. Implementation notes and operational considerations
+
+Several practical design decisions support reliability and maintainability:
+
+- **Transactions and DB triggers**: the booking flow uses `BEGIN IMMEDIATE` to acquire an exclusive write lock and re-check availability inside the transaction, then relies on the database trigger as a second safety net.
+- **Password safety**: passwords and recovery answers are hashed using Werkzeug's secure password hashing, and answers are normalised before hashing so case and whitespace variations do not matter.
+- **Session safety**: the session manager stores only token hashes in memory, never the raw token.
+- **Notification simulation**: in-app notifications are written to the database and mirrored to a simulated email outbox, which helps demo and testing without requiring a full mail server.
+- **Validation reuse**: the Builder validates listing fields and price checks are reused by service methods so create and edit flows remain consistent.
+
+---
+
+## 6. Conclusion
+
+DriveShare demonstrates a coherent application built around key design patterns and database constraints. Each pattern addresses a real maintenance problem: state management, object construction, watch notifications, UI coordination, payment security, and recovery validation.
+
+The result is a system that is not only feature-complete for the specified assignment, but also structured in a way that makes the code easier to test, extend, and explain. The project’s core value lies not only in the user-facing rental functionality, but also in how each pattern is used to enforce separation of concerns, safety, and reliability.king` aborts any insert that overlaps an active booking of the same car. || `payments` | One per booking (`booking_id` unique), payer, payee, amount and a simulated reference. |
 | `watches` | Renter's Observer criteria: `max_price` and/or `start_time`–`end_time`. Unique per (renter, car). |
 | `notifications` | In-app notifications (`kind`: booking / payment / watch / message / review). Each one is mirrored to the email outbox. |
 | `messages` | Direct messages between users, optionally linked to a car. |

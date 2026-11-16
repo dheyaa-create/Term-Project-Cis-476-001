@@ -31,6 +31,8 @@ ACTIVE_STATUSES = ("pending", "confirmed", "paid")
 
 
 class BookingError(ValueError):
+    """Raised when a rental window or booking lifecycle action is invalid."""
+
     pass
 
 
@@ -38,7 +40,11 @@ class BookingError(ValueError):
 # availability                                                                #
 # --------------------------------------------------------------------------- #
 def merged_windows(db, car_id):
-    """Owner availability windows for a car, merged where they touch/overlap."""
+    """Return a sorted union of the car's availability windows.
+
+    Adjacent and overlapping windows are coalesced, allowing a rental to span
+    multiple owner-entered windows when there is no gap between them.
+    """
     rows = db.execute("SELECT start_time, end_time FROM car_availability "
                       "WHERE car_id = ? ORDER BY start_time", (car_id,)).fetchall()
     merged = []
@@ -51,12 +57,17 @@ def merged_windows(db, car_id):
 
 
 def within_availability(db, car_id, start, end):
-    """True when [start, end) lies inside one (merged) availability window."""
+    """Return whether the requested half-open interval fits an offered window."""
     return any(ws <= start and end <= we for ws, we in merged_windows(db, car_id))
 
 
 def conflicting_bookings(db, car_id, start, end, exclude_id=None):
-    """Active bookings of ``car_id`` that overlap [start, end)."""
+    """Find active reservations that intersect the requested interval.
+
+    The strict comparisons implement half-open intervals: back-to-back
+    bookings are allowed, while any shared rental time is considered overlap.
+    ``exclude_id`` supports checking an existing booking during an update.
+    """
     sql = ("SELECT * FROM bookings WHERE car_id = ? AND status IN ('pending','confirmed','paid') "
            "AND start_time < ? AND end_time > ?")
     params = [car_id, end, start]
@@ -67,12 +78,16 @@ def conflicting_bookings(db, car_id, start, end, exclude_id=None):
 
 
 def is_available(db, car_id, start, end):
-    """Offered by the owner for the whole window AND not booked by anyone."""
+    """Require both owner availability and no overlapping active reservation."""
     return within_availability(db, car_id, start, end) and not conflicting_bookings(db, car_id, start, end)
 
 
 def normalize_window(start, end, allow_past=False):
-    """Validate and normalise a requested rental window to ISO strings."""
+    """Validate a rental interval and return normalized ISO date-time strings.
+
+    Past pickups are rejected for new bookings. Search may opt into past dates
+    so historical or demo data can still be queried.
+    """
     s, e = parse_time(start), parse_time(end)
     if e <= s:
         raise BookingError("Drop-off must be after pick-up.")
@@ -82,12 +97,13 @@ def normalize_window(start, end, allow_past=False):
 
 
 def rental_days(start, end):
-    """Billable days: every started 24-hour period counts (minimum 1)."""
+    """Calculate billable rental days, rounding every started day upward."""
     hours = (parse_time(end) - parse_time(start)).total_seconds() / 3600
     return max(1, math.ceil(hours / 24))
 
 
 def quote(price_per_day, start, end):
+    """Return the billable day count and rounded total for a rental interval."""
     days = rental_days(start, end)
     return days, round(days * price_per_day, 2)
 
@@ -96,7 +112,12 @@ def quote(price_per_day, start, end):
 # life-cycle                                                                  #
 # --------------------------------------------------------------------------- #
 def create_booking(db, car_id, renter_id, start, end):
-    """Atomically check availability and create a *pending* booking."""
+    """Atomically validate a rental and create its initial pending reservation.
+
+    The write lock is acquired before the final availability check. This
+    prevents two concurrent renters from both passing the check for the same
+    time window; a database trigger independently guards the insert.
+    """
     start, end = normalize_window(start, end)
     car = db.execute("SELECT * FROM cars WHERE id = ? AND is_active = 1", (car_id,)).fetchone()
     if car is None:
@@ -137,6 +158,7 @@ def create_booking(db, car_id, renter_id, start, end):
 
 
 def get_booking(db, booking_id):
+    """Load a booking together with car, owner, and renter display details."""
     return db.execute(
         "SELECT b.*, c.make, c.model, c.year, c.owner_id, c.location, c.price_per_day, "
         "o.name AS owner_name, r.name AS renter_name "
@@ -146,11 +168,16 @@ def get_booking(db, booking_id):
 
 
 def _title(b):
+    """Build the consistent year/make/model label used in notifications."""
     return f"{b['year']} {b['make']} {b['model']}"
 
 
 def respond(db, booking_id, owner_id, accept, publisher=None):
-    """Owner confirms or declines a pending booking."""
+    """Let the car owner confirm or decline a pending booking.
+
+    Declining releases the reserved dates; when supplied, the event publisher
+    re-evaluates watches that may now match those dates.
+    """
     b = get_booking(db, booking_id)
     if b is None or b["owner_id"] != owner_id:
         raise BookingError("Booking not found.")
@@ -172,7 +199,7 @@ def respond(db, booking_id, owner_id, accept, publisher=None):
 
 
 def cancel(db, booking_id, renter_id, publisher=None):
-    """Renter cancels a pending or confirmed (unpaid) booking."""
+    """Allow the renter to cancel a pending or confirmed unpaid booking."""
     b = get_booking(db, booking_id)
     if b is None or b["renter_id"] != renter_id:
         raise BookingError("Booking not found.")
@@ -187,13 +214,14 @@ def cancel(db, booking_id, renter_id, publisher=None):
 
 
 def display_status(b):
-    """Paid rentals whose end time has passed are shown as 'completed'."""
+    """Present elapsed paid rentals as completed without changing stored state."""
     if b["status"] == "paid" and b["end_time"] < datetime.now().strftime(TIME_FMT):
         return "completed"
     return b["status"]
 
 
 def bookings_as_renter(db, user_id):
+    """List a user's rentals as renter, with the corresponding owner names."""
     return db.execute(
         "SELECT b.*, c.make, c.model, c.year, c.owner_id, o.name AS owner_name "
         "FROM bookings b JOIN cars c ON c.id = b.car_id JOIN users o ON o.id = c.owner_id "
@@ -201,6 +229,7 @@ def bookings_as_renter(db, user_id):
 
 
 def bookings_as_owner(db, user_id):
+    """List reservations for the user's cars, with renter display names."""
     return db.execute(
         "SELECT b.*, c.make, c.model, c.year, c.owner_id, r.name AS renter_name "
         "FROM bookings b JOIN cars c ON c.id = b.car_id JOIN users r ON r.id = b.renter_id "

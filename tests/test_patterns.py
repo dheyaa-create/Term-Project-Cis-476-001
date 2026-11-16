@@ -1,4 +1,5 @@
 """Unit tests - one group per design pattern plus the double-booking rule."""
+import os
 import sqlite3
 
 import pytest
@@ -10,16 +11,20 @@ from driveshare.patterns.observer import CarListingSubject, WatchObserver
 from driveshare.patterns.password_recovery import RecoveryRequest, build_recovery_chain
 from driveshare.patterns.payment_proxy import PaymentProxy, PaymentRequest
 from driveshare.patterns.session_manager import SessionManager
+from driveshare.security import normalize_answer, password_problem
 from driveshare.services import booking_service as bookings
 from driveshare.services import car_service, community_service as community
+from driveshare.services import notification_service
 
 
 # ----------------------------- Singleton ----------------------------- #
 def test_session_manager_is_singleton():
+    """Repeated construction returns the same process-wide manager."""
     assert SessionManager() is SessionManager()
 
 
 def test_session_lifecycle():
+    """Sessions resolve, store only token hashes, and can be revoked."""
     sm = SessionManager()
     tok = sm.create_session(42)
     assert sm.get_user_id(tok) == 42
@@ -30,22 +35,26 @@ def test_session_lifecycle():
 
 # ------------------------------ Builder ------------------------------ #
 def test_builder_requires_fields():
+    """Building an incomplete listing reports missing required attributes."""
     with pytest.raises(ListingValidationError):
         CarListingBuilder(1).set_model("A", "B").build()
 
 
 def test_builder_optional_and_director():
+    """A Director recipe populates optional fields and a readable title."""
     car = CarListingDirector.family_suv(CarListingBuilder(1), "Kia", "Telluride", 2023, "Detroit", 99).build()
     assert car.seats == 7 and "AWD" in car.features and car.title == "2023 Kia Telluride"
 
 
 def test_builder_rejects_bad_window():
+    """Availability windows must end after their start."""
     with pytest.raises(ListingValidationError):
         CarListingBuilder(1).add_availability(t(5), t(2))
 
 
 # ------------------------------ Observer ----------------------------- #
 def test_observer_price_drop():
+    """A watch stays silent above its target and notifies once it qualifies."""
     sent = []
     car = {"id": 1, "make": "A", "model": "B", "year": 2020, "price_per_day": 80}
     subject = CarListingSubject(car)
@@ -60,6 +69,7 @@ def test_observer_price_drop():
 
 
 def test_watch_notified_on_price_update(app, ctx):
+    """Persisted price changes publish events to matching active watches."""
     ids = app.ids
     community.add_watch(ctx, ids["renter"], ids["car"], max_price=40)
     before = ctx.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND kind='watch'",
@@ -72,6 +82,7 @@ def test_watch_notified_on_price_update(app, ctx):
 
 
 def test_watch_notified_when_booking_released(app, ctx):
+    """Cancelling a reservation re-evaluates watches for the newly free dates."""
     ids = app.ids
     b = bookings.create_booking(ctx, ids["car"], ids["renter"], t(2), t(4))
     community.add_watch(ctx, ids["renter2"], ids["car"], start=t(3), end=t(5))
@@ -84,6 +95,7 @@ def test_watch_notified_when_booking_released(app, ctx):
 
 # ------------------------- No double booking ------------------------- #
 def test_overlapping_booking_rejected(app, ctx):
+    """Overlapping reservations fail while adjacent reservations are permitted."""
     ids = app.ids
     bookings.create_booking(ctx, ids["car"], ids["renter"], t(2), t(5))
     with pytest.raises(bookings.BookingError):
@@ -93,6 +105,7 @@ def test_overlapping_booking_rejected(app, ctx):
 
 
 def test_db_trigger_blocks_overlap(app, ctx):
+    """The database trigger independently blocks a conflicting direct insert."""
     ids = app.ids
     bookings.create_booking(ctx, ids["car"], ids["renter"], t(2), t(5))
     with pytest.raises(sqlite3.IntegrityError):
@@ -101,16 +114,19 @@ def test_db_trigger_blocks_overlap(app, ctx):
 
 
 def test_booking_outside_availability_rejected(app, ctx):
+    """A booking cannot extend beyond the owner's offered availability."""
     with pytest.raises(bookings.BookingError):
         bookings.create_booking(ctx, app.ids["car"], app.ids["renter"], t(29), t(32))
 
 
 def test_price_is_per_started_day(app, ctx):
+    """Any partial extra 24-hour period is billed as a complete day."""
     assert bookings.quote(50, t(1, 10), t(3, 12)) == (3, 150)
 
 
 # ------------------------------- Proxy ------------------------------- #
 def test_proxy_blocks_unconfirmed_and_wrong_user(app, ctx):
+    """The payment proxy validates booking state, payer, amount, and repeats."""
     ids = app.ids
     b = bookings.create_booking(ctx, ids["car"], ids["renter"], t(2), t(4))
     proxy = PaymentProxy(ctx)
@@ -128,6 +144,7 @@ def test_proxy_blocks_unconfirmed_and_wrong_user(app, ctx):
 
 # ----------------------- Chain of Responsibility --------------------- #
 def test_recovery_chain(app, ctx):
+    """Recovery handlers run in order and stop at the first incorrect answer."""
     uid = app.ids["renter"]
     chain = build_recovery_chain(ctx)
     bad = chain.handle(RecoveryRequest(uid, ["red", "WRONG", "rex"], "NewPass99"))
@@ -138,6 +155,7 @@ def test_recovery_chain(app, ctx):
 
 
 def test_recovery_lockout(app, ctx):
+    """Five failed recovery attempts prevent another security-question attempt."""
     uid = app.ids["renter"]
     for _ in range(5):
         build_recovery_chain(ctx).handle(RecoveryRequest(uid, ["x", "x", "x"], "NewPass99"))
@@ -147,6 +165,7 @@ def test_recovery_lockout(app, ctx):
 
 # ------------------------- end-to-end (HTTP) ------------------------- #
 def test_full_rental_flow(app):
+    """Exercise booking, confirmation, payment, reviews, messages, and notices."""
     ids = app.ids
     owner, renter = app.test_client(), app.test_client()
     login(owner, "owner@x.com"); login(renter, "renter@x.com")
@@ -165,6 +184,7 @@ def test_full_rental_flow(app):
 
 
 def test_register_and_recover_via_http(app):
+    """Register through HTTP, recover the password, and log in with the reset."""
     c = app.test_client()
     data = {"name": "New", "email": "new@x.com", "password": "Secret123", "confirm": "Secret123",
             "question1": "A?", "question2": "B?", "question3": "C?",
@@ -176,3 +196,25 @@ def test_register_and_recover_via_http(app):
                                         "password": "Brand9new", "confirm": "Brand9new"})
     assert r.status_code == 302
     assert c.post("/login", data={"email": "new@x.com", "password": "Brand9new"}).status_code == 302
+
+
+def test_security_helpers_handle_non_string_inputs():
+    """Security utilities normalize non-string values and enforce the policy."""
+    assert normalize_answer(123) == "123"
+    assert password_problem(1234567) == "Password must be at least 8 characters."
+    assert password_problem("Password123") is None
+
+
+def test_notification_email_outbox_allows_relative_path(app, tmp_path):
+    """A relative outbox filename is created in the current working directory."""
+    app.config["EMAIL_OUTBOX"] = "outbox.log"
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        with app.app_context():
+            from driveshare.database import get_db
+            db = get_db()
+            notification_service.notify(db, app.ids["renter"], "test", "hello")
+        assert (tmp_path / "outbox.log").exists()
+    finally:
+        os.chdir(cwd)

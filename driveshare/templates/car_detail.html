@@ -3,7 +3,8 @@
 {% block content %}
 <div class="two-col">
   <div>
-    <div class="car-thumb big">{{ car.make[0] }}</div>
+    <img class="car-image detail-image" src="{{ car|car_image }}"
+         alt="{{ car.year }} {{ car.make }} {{ car.model }}">
     <div class="card" style="margin-top:18px">
       <h1>{{ car.year }} {{ car.make }} {{ car.model }}</h1>
       <p class="muted">📍 {{ car.location }} · {{ '{:,}'.format(car.mileage) }} miles

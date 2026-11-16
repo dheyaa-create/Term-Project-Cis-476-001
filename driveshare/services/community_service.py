@@ -13,6 +13,8 @@ from driveshare.services.car_service import get_car, make_publisher
 
 
 class CommunityError(ValueError):
+    """Raised when a watch, message, payment, or review action is invalid."""
+
     pass
 
 
@@ -51,17 +53,20 @@ def add_watch(db, renter_id, car_id, max_price="", start="", end=""):
 
 
 def remove_watch(db, renter_id, watch_id):
+    """Delete a watch only when it belongs to the requesting renter."""
     db.execute("DELETE FROM watches WHERE id = ? AND renter_id = ?", (watch_id, renter_id))
     db.commit()
 
 
 def watches_of(db, renter_id):
+    """List a renter's watches with the car details needed by the UI."""
     return db.execute("SELECT w.*, c.make, c.model, c.year, c.price_per_day, c.location "
                       "FROM watches w JOIN cars c ON c.id = w.car_id WHERE w.renter_id = ? "
                       "ORDER BY w.id DESC", (renter_id,)).fetchall()
 
 
 def watch_for(db, renter_id, car_id):
+    """Return a renter's watch for one car, if one exists."""
     return db.execute("SELECT * FROM watches WHERE renter_id = ? AND car_id = ?",
                       (renter_id, car_id)).fetchone()
 
@@ -70,6 +75,11 @@ def watch_for(db, renter_id, car_id):
 # Messaging                                                                   #
 # --------------------------------------------------------------------------- #
 def send_message(db, sender_id, recipient_id, body, car_id=None):
+    """Validate, persist, and notify the recipient about a direct message.
+
+    The preview is shortened for notification display while the complete body
+    remains in the message thread.
+    """
     body = (body or "").strip()
     if not body:
         raise CommunityError("Message cannot be empty.")
@@ -89,7 +99,7 @@ def send_message(db, sender_id, recipient_id, body, car_id=None):
 
 
 def conversations(db, user_id):
-    """One row per conversation partner with the latest message and unread count."""
+    """Return one inbox row per partner, including latest message and unread count."""
     return db.execute(
         "SELECT u.id AS partner_id, u.name AS partner_name, MAX(m.id) AS last_id, "
         " (SELECT body FROM messages WHERE id = MAX(m.id)) AS last_body, "
@@ -102,6 +112,7 @@ def conversations(db, user_id):
 
 
 def thread(db, user_id, partner_id):
+    """Mark the partner's incoming messages read and return the full thread."""
     db.execute("UPDATE messages SET is_read = 1 WHERE sender_id = ? AND recipient_id = ?",
                (partner_id, user_id))
     db.commit()
@@ -116,8 +127,11 @@ def thread(db, user_id, partner_id):
 # --------------------------------------------------------------------------- #
 def pay_booking(db, booking_id, payer_id, amount, card_last4="4242"):
     """
-    The UI's "Pay $X" button ends up here. We only ever talk to the
-    ``PaymentProxy`` - never to the real gateway directly.
+    Process payment through the validating Proxy and notify both parties.
+
+    The UI's "Pay $X" button ends up here. This service never contacts the
+    simulated gateway directly; a rejected proxy result becomes a
+    ``CommunityError`` for the route to display.
     """
     proxy = PaymentProxy(db)
     result = proxy.process_payment(PaymentRequest(booking_id, payer_id, float(amount), card_last4))
@@ -138,7 +152,7 @@ def pay_booking(db, booking_id, payer_id, amount, card_last4="4242"):
 # Reviews                                                                     #
 # --------------------------------------------------------------------------- #
 def can_review(db, booking, user_id):
-    """Both parties may review once the booking is paid, one review each."""
+    """Check that the paid booking participant has not reviewed it already."""
     if booking["status"] != "paid":
         return False
     if user_id not in (booking["renter_id"], booking["owner_id"]):
@@ -148,6 +162,7 @@ def can_review(db, booking, user_id):
 
 
 def add_review(db, booking_id, reviewer_id, rating, comment):
+    """Validate and store a participant's review, then notify its recipient."""
     b = bookings.get_booking(db, booking_id)
     if b is None or not can_review(db, b, reviewer_id):
         raise CommunityError("You cannot review this rental.")
@@ -168,6 +183,7 @@ def add_review(db, booking_id, reviewer_id, rating, comment):
 
 
 def reviews_about(db, user_id):
+    """Return reviews received by a user, enriched with reviewer and car names."""
     return db.execute("SELECT r.*, u.name AS reviewer_name, c.make, c.model, c.year "
                       "FROM reviews r JOIN users u ON u.id = r.reviewer_id "
                       "JOIN bookings b ON b.id = r.booking_id JOIN cars c ON c.id = b.car_id "
@@ -175,11 +191,13 @@ def reviews_about(db, user_id):
 
 
 def rating_summary(db, user_id):
+    """Return the one-decimal average rating and review count for a user."""
     row = db.execute("SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS n FROM reviews "
                      "WHERE reviewee_id = ?", (user_id,)).fetchone()
     return row["avg"], row["n"]
 
 
 def reviewed_booking_ids(db, user_id):
+    """Return booking ids that this user has already reviewed."""
     return {r[0] for r in db.execute("SELECT booking_id FROM reviews WHERE reviewer_id = ?",
                                      (user_id,)).fetchall()}

@@ -92,6 +92,7 @@ class CarListing:
 
     @property
     def title(self):
+        """Return the conventional year/make/model label for the listing."""
         return f"{self.year} {self.make} {self.model}"
 
 
@@ -101,6 +102,7 @@ class CarListingBuilder:
     REQUIRED = ("make", "model", "year", "mileage", "location", "price_per_day")
 
     def __init__(self, owner_id):
+        """Start a builder for the owner who will publish the new listing."""
         if not owner_id:
             raise ListingValidationError("A listing needs an owner.")
         self._owner_id = owner_id
@@ -110,6 +112,7 @@ class CarListingBuilder:
 
     # ---------------- required parts ---------------- #
     def set_model(self, make, model):
+        """Set the required make and model after trimming surrounding spaces."""
         make, model = (make or "").strip(), (model or "").strip()
         if not make or not model:
             raise ListingValidationError("Make and model are required.")
@@ -117,6 +120,7 @@ class CarListingBuilder:
         return self
 
     def set_year(self, year):
+        """Set a numeric model year within the supported historical range."""
         try:
             year = int(year)
         except (TypeError, ValueError):
@@ -127,6 +131,7 @@ class CarListingBuilder:
         return self
 
     def set_mileage(self, mileage):
+        """Set non-negative mileage as an integer number of miles."""
         try:
             mileage = int(mileage)
         except (TypeError, ValueError):
@@ -137,6 +142,7 @@ class CarListingBuilder:
         return self
 
     def set_location(self, location):
+        """Set the required pick-up location after trimming whitespace."""
         location = (location or "").strip()
         if not location:
             raise ListingValidationError("Pick-up location is required.")
@@ -144,16 +150,19 @@ class CarListingBuilder:
         return self
 
     def set_price_per_day(self, price):
+        """Set the required daily price using the shared positive-price rule."""
         self._data["price_per_day"] = validate_price(price)
         return self
 
     # ---------------- optional parts ---------------- #
     def set_car_type(self, car_type):
+        """Set an optional vehicle category when a non-empty value is supplied."""
         if car_type:
             self._data["car_type"] = car_type.strip()
         return self
 
     def set_seats(self, seats):
+        """Set optional seating capacity, constrained to 1 through 15 seats."""
         if seats not in (None, ""):
             seats = int(seats)
             if not 1 <= seats <= 15:
@@ -162,16 +171,19 @@ class CarListingBuilder:
         return self
 
     def set_transmission(self, transmission):
+        """Set an optional transmission label."""
         if transmission:
             self._data["transmission"] = transmission.strip()
         return self
 
     def set_fuel_type(self, fuel_type):
+        """Set an optional fuel-type label."""
         if fuel_type:
             self._data["fuel_type"] = fuel_type.strip()
         return self
 
     def add_feature(self, feature):
+        """Append one trimmed feature, ignoring empty and duplicate values."""
         feature = (feature or "").strip()
         if feature and feature not in self._features:
             self._features.append(feature)
@@ -184,6 +196,7 @@ class CarListingBuilder:
         return self
 
     def set_description(self, description):
+        """Set the optional human-readable listing description."""
         if description:
             self._data["description"] = description.strip()
         return self
@@ -217,6 +230,7 @@ class CarListingDirector:
 
     @staticmethod
     def economy_sedan(builder, make, model, year, location, price):
+        """Configure the builder with the project's standard economy-sedan recipe."""
         return (builder.set_model(make, model).set_year(year).set_mileage(30000)
                 .set_location(location).set_price_per_day(price)
                 .set_car_type("Sedan").set_seats(5).set_transmission("Automatic")
@@ -224,6 +238,7 @@ class CarListingDirector:
 
     @staticmethod
     def family_suv(builder, make, model, year, location, price):
+        """Configure the builder with the project's standard family-SUV recipe."""
         return (builder.set_model(make, model).set_year(year).set_mileage(20000)
                 .set_location(location).set_price_per_day(price)
                 .set_car_type("SUV").set_seats(7).set_transmission("Automatic")
