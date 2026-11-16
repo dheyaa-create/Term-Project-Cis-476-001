@@ -2,7 +2,10 @@
 
 DriveShare is a web application (Python 3 + Flask + SQLite) that connects car owners with people who need a car for a short time, in the spirit of Turo. Owners list their cars and manage price and availability. Renters search, watch, book and pay. Both sides message each other, get notifications, see their rental history and review each other.
 
-> Term project – Software design patterns. **Author:** _Your Name_ (individual project, all optional features included).
+> Term project – Software design patterns. **Author:** Dheyaa Alrabeei (individual project, all optional features included).
+>
+> **Repository:** https://github.com/dheyaa-create/Term-Project-Cis-476-001  
+> **Video presentation:** [ADD VIDEO LINK]
 
 ## Features
 
@@ -37,7 +40,7 @@ Demo accounts created by `seed.py` all use the password `Password123`:
 
 Security answers for the demo users are `blue`, `ann arbor` and `smith`. Every user starts with a simulated balance of $1,000.
 
-Run the test suite (17 tests covering every pattern and the full rental flow):
+Run the test suite (19 tests covering every pattern, the security helpers and the full rental flow):
 
 ```bash
 python -m pytest -q

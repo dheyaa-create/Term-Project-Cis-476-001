@@ -53,14 +53,14 @@ const THEME = { name: 'DriveShare Mono', headFontFace: 'Arial', bodyFontFace: 'C
   let s = add('Intro', 'DARK');
   s.addText('DriveShare', { placeholder: 'title' });
   s.addText([{ text: 'A peer-to-peer car rental platform built with six design patterns', options: { breakLine: true } },
-             { text: 'Your Name · Software Design Term Project · Fall 2026', options: { fontSize: 16, color: C.background2 } }], { placeholder: 'body' });
+             { text: 'Dheyaa Alrabeei · CIS 476 Software Design Term Project · Fall 2026', options: { fontSize: 16, color: C.background2 } }], { placeholder: 'body' });
   s.addNotes('Introduce yourself and DriveShare: a Turo-style web app where owners list cars and renters search, watch, book, pay, message and review.');
 
   // 2 Agenda
   s = add('Intro'); s.addText('What this video covers', { placeholder: 'title' });
   [['1', 'Live demo', 'Every feature, end to end, as owner and renter'], ['2', 'Architecture', 'Flask + SQLite, services and pattern layers'],
    ['3', 'Six design patterns', 'Singleton, Observer, Mediator, Builder, Proxy, Chain'], ['4', 'Code walkthrough', 'Observer and Chain of Responsibility in detail'],
-   ['5', 'Data model and testing', 'Schema, no-double-booking, 17 automated tests']].forEach(([n, h, d], i) => {
+   ['5', 'Data model and testing', 'Schema, no-double-booking, 19 automated tests']].forEach(([n, h, d], i) => {
     const y = 1.6 + i * 1.02;
     s.addShape(pres.shapes.OVAL, { x: 0.8, y, w: 0.7, h: 0.7, fill: { color: C.accent1 }, line: { color: C.accent1 } });
     s.addText(n, { x: 0.8, y, w: 0.7, h: 0.7, fontSize: 20, bold: true, color: C.background1, align: 'center', valign: 'middle', margin: 0, isTextBox: true });
@@ -189,7 +189,7 @@ def build_recovery_chain(db, on_reset=None):
 
   // 15 Double booking + tests
   s = add('Data'); s.addText('Correctness and testing', { placeholder: 'title' });
-  [['2', 'layers stop overlaps', 'BEGIN IMMEDIATE lock + SQLite trigger'], ['17', 'automated tests', 'Every pattern + full HTTP rental flow'], ['6', 'design patterns', 'Each in its own module, matching diagrams']].forEach(([n, l, d], i) => {
+  [['2', 'layers stop overlaps', 'BEGIN IMMEDIATE lock + SQLite trigger'], ['19', 'automated tests', 'Every pattern + full HTTP rental flow'], ['6', 'design patterns', 'Each in its own module, matching diagrams']].forEach(([n, l, d], i) => {
     const x = 0.6 + i * 4.1;
     card(s, x, 1.6, 3.8, 2.7);
     s.addText(n, { x: x + 0.3, y: 1.75, w: 3.2, h: 1.2, fontSize: 64, bold: true, color: C.accent1, margin: 0, isTextBox: true });
@@ -203,17 +203,17 @@ def build_recovery_chain(db, on_reset=None):
   // 16 Task summary
   pres.addSection({ title: 'Wrap-up' });
   s = add('Wrap-up'); s.addText('Task summary', { placeholder: 'title' });
-  const rows = [['Task', 'Who'], ['Requirements, architecture and UML / ER design', 'Your Name'], ['Database schema, seed data', 'Your Name'],
-    ['Auth, Singleton session, Chain password recovery', 'Your Name'], ['Listings (Builder), search, booking, no-double-booking', 'Your Name'],
-    ['Watch list (Observer), messaging, notifications', 'Your Name'], ['Payment (Proxy), history, reviews', 'Your Name'],
-    ['UI templates and Mediator JavaScript', 'Your Name'], ['Tests, report, slides, video', 'Your Name']];
+  const rows = [['Task', 'Who'], ['Requirements, architecture and UML / ER design', 'Dheyaa Alrabeei'], ['Database schema, seed data', 'Dheyaa Alrabeei'],
+    ['Auth, Singleton session, Chain password recovery', 'Dheyaa Alrabeei'], ['Listings (Builder), search, booking, no-double-booking', 'Dheyaa Alrabeei'],
+    ['Watch list (Observer), messaging, notifications', 'Dheyaa Alrabeei'], ['Payment (Proxy), history, reviews', 'Dheyaa Alrabeei'],
+    ['UI templates and Mediator JavaScript', 'Dheyaa Alrabeei'], ['Tests, report, slides, video', 'Dheyaa Alrabeei']];
   s.addTable(rows.map((r, i) => r.map(t => ({ text: t, options: i === 0 ? { bold: true, color: C.background1, fill: { color: C.accent1 } } : { color: C.text1, fill: { color: i % 2 ? C.background1 : C.background2 } } }))),
     { x: 0.6, y: 1.5, w: 12.1, colW: [8.6, 3.5], fontSize: 15, rowH: 0.52, border: { type: 'solid', pt: 0.5, color: 'D9D9D9' }, valign: 'middle' });
 
   // 17 Close
   s = add('Wrap-up', 'DARK');
   s.addText('Thank you', { placeholder: 'title' });
-  s.addText([{ text: 'Code, report, diagrams and slides: github.com/your-username/DriveShare', options: { breakLine: true } },
+  s.addText([{ text: 'Code, report, diagrams and slides: github.com/dheyaa-create/Term-Project-Cis-476-001', options: { breakLine: true } },
              { text: 'Run it: pip install -r requirements.txt · python seed.py · python run.py', options: { fontSize: 16, color: C.background2 } }], { placeholder: 'body' });
 
   await pres.writeFile({ fileName: D + 'DriveShare_Presentation.pptx' });

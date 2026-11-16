@@ -1,9 +1,9 @@
 # DriveShare – Design Report
 
 **Project:** DriveShare, a peer-to-peer car rental platform
-**Team:** _Your Name_ (individual)
-**Repository:** _https://github.com/your-username/DriveShare_
-**Video:** _https://…_
+**Team:** Dheyaa Alrabeei (individual)
+**Repository:** https://github.com/dheyaa-create/Term-Project-Cis-476-001
+**Video:** [ADD VIDEO LINK]
 
 ---
 
@@ -239,7 +239,7 @@ The result is a system that is not only feature-complete for the specified assig
 
 ## 5. Testing
 
-`tests/test_patterns.py` contains 17 pytest tests:
+`tests/test_patterns.py` contains 19 pytest tests:
 
 - Singleton identity and the session life-cycle.
 - Builder required fields, Director presets, and invalid windows.
@@ -247,4 +247,5 @@ The result is a system that is not only feature-complete for the specified assig
 - No double booking, at both the service level and the DB-trigger level, including back-to-back bookings.
 - Proxy: rejects pending bookings, the wrong user, the wrong amount and double payment, and creates the real gateway lazily.
 - Chain: identifies which link failed, a full successful pass, and lockout.
+- Security helpers: password rules and answer normalisation handle non-string input; notifications are written to the email outbox, including with a relative path.
 - Two end-to-end HTTP tests covering register → recover → login, and book → confirm → pay → review → message → notifications.
